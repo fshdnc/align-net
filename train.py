@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import time
 import copy
 import json
@@ -9,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from datetime import datetime
+from evaluation import evaluate
 import ParallelDataset
 
 # DEBUGGING
@@ -91,7 +93,7 @@ class AlignLangNet(torch.nn.Module):
         data_emb_trg = self.embed(self.bert_model_trg, data_tok_trg, "AVG")
         return {"src": data_emb_src, "trg": data_emb_trg}
 
-def AlignLoss(data, gold):
+def AlignLoss(data, gold, class_weight=None):
     """
     L(X,Y;theta_src) =
     |   f_src(X; theta_src)^T * f_tgt(Y)               |
@@ -99,6 +101,8 @@ def AlignLoss(data, gold):
     | ||f_src(X; theta_src)|| ||f_tgt(Y)||             |
 
     Par(X, Y) is 1 if X, Y are parallel, 0 otherwise
+
+    No sample_weights equivalent to {0:1, 1:1}
     """
     X = data["src"] # src
     Y = data["trg"] # trg
@@ -113,16 +117,21 @@ def AlignLoss(data, gold):
     Y_norm = torch.sqrt(torch.sum(torch.mul(Y, Y), 1)) # shape: (batch_size)
     denominator = torch.mul(X_norm, Y_norm) # shape: (batch_size)
     loss_per_sample = torch.abs(torch.div(numerator, denominator)-gold)
+    if class_weight:
+        #weight_tensor=gold
+        #for g, w in class_weight.items():
+        #    weight_tensor = torch.where(gold==g, torch.tensor(w, dtype=torch.float), weight_tensor.float())
+        class_weight = torch.where(gold==0, class_weight[0], class_weight[1])
+        loss_per_sample = torch.mul(loss_per_sample, class_weight)
     return torch.mean(loss_per_sample)
 
 
 def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
-    global device
+    global device, src_sentences, trg_sentences, pos_dict
     since = time.time()
 
     best_model_wts = copy.deepcopy(model.state_dict())
-    #best_acc = 0.0
-    best_acc = 1000
+    best_acc = 0
 
     # for every epoch -> for train and eval -> loop over data
     for epoch in range(num_epochs):
@@ -132,11 +141,14 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
         for phase in ["train", "val"]:
             if phase == "train":
                 model.train()
+                class_weight = {0:torch.tensor(0.3).to(device).float(), 1: torch.tensor(1).to(device).float()}
             else:
                 model.eval()
+                class_weight={}
 
             running_loss = 0.0
             #eval_metric = 0
+            batch_count = 0
             for inputs, labels in dataloaders[phase]:
                 # tokenize the sentences and move to device
                 labels = labels.to(device) #.float()
@@ -146,29 +158,37 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
                 # forward, track history if only in the training phase
                 with torch.set_grad_enabled(phase=="train"):
                     outputs = model(inputs)
-                    loss = criterion(outputs, labels)
+                    loss = criterion(outputs, labels, class_weight=class_weight)
+                    print("EPOCH", str(epoch), "PHASE", phase, "BATCH_LOSS", loss.tolist(), file=sys.stderr)
 
                     # backward
                     if phase == "train":
+                        batch_count += 1
                         loss.backward()
                         optimizer.step()
 
                 running_loss += loss.item() * labels.size(0)
                 # eval_metrics += e.g. torch.sum(preds == labels.data)
+                
+                if phase == "train" and batch_count == 50: # check acc every 50 batches
+                    batch_count = 0
+                    epoch_acc = evaluate(model, pos_dict, src_sentences, trg_sentences, device)
+                    print("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}".format(epoch, epoch_acc))
 
             epoch_loss = running_loss / len(dataloaders[phase]) #dataset_sizes[phase]
-            #epoch_acc = running_corrects.double() / dataset_sizes[phase]
-            epoch_acc = 0.000 # dummy
-
-            print("Phase\t{}\tLoss\t{:.4f}\tAcc\t{:.4f}".format(phase, epoch_loss, epoch_acc))
+            # in case of memory leakage, try epoch_loss += loss.detach().item()
 
             #if phase == "val" and epoch_acc > best_acc:
-            if phase == "val" and epoch_loss < best_acc:
-                #best_acc = epoch_acc
-                best_acc = epoch_loss
-                best_model_wts = copy.deepcopy(model.state_dict())
-                print("Best model weights copied")
-                model.save_checkpoint()
+            if phase == "val":
+                epoch_acc = evaluate(model, pos_dict, src_sentences, trg_sentences, device)
+                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tAcc\t{:.4f}".format(epoch, phase, epoch_loss, epoch_acc))
+                if epoch_acc > best_acc:
+                    best_acc = epoch_acc
+                    best_model_wts = copy.deepcopy(model.state_dict())
+                    #print("Best model weights copied")
+                    model.save_checkpoint()
+            else:
+                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}".format(epoch, phase, epoch_loss))
 
         print()
 
@@ -182,7 +202,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
     return model
 
 def main():
-    global device
+    global device, src_sentences, trg_sentences, pos_dict
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("device:", device)
 
@@ -209,11 +229,11 @@ def main():
     trg_sentences = [line.strip() for line in trg_sentences]
 
     # dataloaders
-    train_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)])
+    train_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)][:2560])
     train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=train_batch_size)
 
     #val_dataset = ParallelDataset([*generate_candidate()])
-    val_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)])
+    val_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)][:2560])
     val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=train_batch_size)
 
     dataloaders = {"train": train_dataloader, "val": val_dataloader}
@@ -221,7 +241,7 @@ def main():
     model = AlignLangNet(model_path, device=device)
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-5, momentum=0.9)
     
-    model = train_model(model, dataloaders, AlignLoss, optimizer, num_epochs=10)
+    model = train_model(model, dataloaders, AlignLoss, optimizer, num_epochs=3)
     print("Sanity check, the encoder weights should be different:")
     compare_models(model.bert_model_src.state_dict(), model.bert_model_trg.state_dict())
 
@@ -229,6 +249,7 @@ def main():
     model_name = "model_" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".pt"
     model.to("cpu")
     torch.save(model, model_name)
+    print("Final model (best checkpoint) saved to", model_name)
     return 0
     
 if __name__=="__main__":

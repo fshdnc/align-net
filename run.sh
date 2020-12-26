@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH -J pretrain-small
+#SBATCH -J train
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=4G
-#SBATCH --time=10:00:00
+#SBATCH --mem=64G
+#SBATCH --time=24:10:00
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:v100:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --account=project_2002820
-#SBATCH --output=/scratch/project_2002820/lihsin/tatoeba/log-%j.out
-#SBATCH --error=/scratch/project_2002820/lihsin/tatoeba/log-%j.err
+#SBATCH --output=/scratch/project_2002820/lihsin/align-lang/log-%j.out
+#SBATCH --error=/scratch/project_2002820/lihsin/align-lang/log-%j.err
 
 echo "START $SLURM_JOBID: $(date)"
 
@@ -24,5 +24,5 @@ trap on_exit EXIT
 
 module purge
 module load pytorch/1.3.1
-python3 train.py
+python3 train.py > log-$SLURM_JOBID.pyout
 
