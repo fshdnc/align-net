@@ -127,7 +127,7 @@ def AlignLoss(data, gold, class_weight=None):
 
 
 def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
-    global device, src_sentences, trg_sentences, pos_dict
+    global device, src_sentences, trg_sentences, pos_dict, val_src_sentences, val_trg_sentences, val_pos_dict
     since = time.time()
 
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -135,6 +135,9 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
 
     # for every epoch -> for train and eval -> loop over data
     for epoch in range(num_epochs):
+        patience = 0
+        patience_acc = 0
+
         print("Epoch {}/{}".format(epoch, num_epochs-1))
         print("-"*10)
 
@@ -170,18 +173,27 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
                 running_loss += loss.item() * labels.size(0)
                 # eval_metrics += e.g. torch.sum(preds == labels.data)
                 
-                if phase == "train" and batch_count == 50: # check acc every 50 batches
+                if phase == "train" and batch_count == 500: # check acc every 500 batches
                     batch_count = 0
-                    epoch_acc = evaluate(model, pos_dict, src_sentences, trg_sentences, device)
+                    epoch_acc = evaluate(model, val_pos_dict, val_src_sentences, val_trg_sentences, device)
                     print("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}".format(epoch, epoch_acc))
-
+                    if epoch_acc > patience_acc: # early stopping
+                        patience_acc = epoch_acc
+                        patience = 0
+                    else:
+                        patience += 1
+                if patience > 10: # if acc does not improve in 10 checks x 50 batch/check x 128 sample/batch
+                    print("Early stopping, best accuracy", patience_acc)
+                    exit(0)
+                    
             epoch_loss = running_loss / len(dataloaders[phase]) #dataset_sizes[phase]
             # in case of memory leakage, try epoch_loss += loss.detach().item()
 
             #if phase == "val" and epoch_acc > best_acc:
             if phase == "val":
-                epoch_acc = evaluate(model, pos_dict, src_sentences, trg_sentences, device)
-                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tAcc\t{:.4f}".format(epoch, phase, epoch_loss, epoch_acc))
+                train_acc = evaluate(model, pos_dict, src_sentences, trg_sentences, device)
+                epoch_acc = evaluate(model, val_pos_dict, val_src_sentences, val_trg_sentences, device)
+                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tTrain_acc\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, train_acc, epoch_acc))
                 if epoch_acc > best_acc:
                     best_acc = epoch_acc
                     best_model_wts = copy.deepcopy(model.state_dict())
@@ -202,7 +214,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
     return model
 
 def main():
-    global device, src_sentences, trg_sentences, pos_dict
+    global device, src_sentences, trg_sentences, pos_dict, val_src_sentences, val_trg_sentences, val_pos_dict
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("device:", device)
 
@@ -215,7 +227,7 @@ def main():
     del D
 
     # The dictionary of positives
-    with open("dev-src-positives.json", "r") as f:
+    with open("dev-positives.json", "r") as f:
         pos_dict = json.load(f)
 
     # src sentences in text form
@@ -229,21 +241,41 @@ def main():
     trg_sentences = [line.strip() for line in trg_sentences]
 
     # dataloaders
-    train_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)][:2560])
+    train_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)])
     train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=train_batch_size)
 
+    # load data for the valiation dataset
+    with open("test-trg-test-src-flatL2.npy", "rb") as f:
+        val_D, val_I = np.load(f)
+    del val_D
+
+    # The dictionary of positives
+    with open("test-positives.json", "r") as f:
+        val_pos_dict = json.load(f)
+
+    # src sentences in text form
+    with open("data/eng-fin/test.src", "r") as f:
+        val_src_sentences = f.readlines()
+    val_src_sentences = [line.strip() for line in val_src_sentences]
+
+    # trg sentences in text form
+    with open("data/eng-fin/test.trg", "r") as f:
+        val_trg_sentences = f.readlines()
+    val_trg_sentences = [line.strip() for line in val_trg_sentences]
+    
     #val_dataset = ParallelDataset([*generate_candidate()])
-    val_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)][:2560])
+    val_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(val_I, val_pos_dict, val_src_sentences, val_trg_sentences)])
     val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=train_batch_size)
 
     dataloaders = {"train": train_dataloader, "val": val_dataloader}
     
     model = AlignLangNet(model_path, device=device)
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-5, momentum=0.9)
+    optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
+    #optimizer = torch.optim.SGD(model.parameters(), lr=2e-5, momentum=0.9)
+    print("lr\t2e-5, adam")
     
     model = train_model(model, dataloaders, AlignLoss, optimizer, num_epochs=3)
-    print("Sanity check, the encoder weights should be different:")
-    compare_models(model.bert_model_src.state_dict(), model.bert_model_trg.state_dict())
+    assert not compare_models(model.bert_model_src.state_dict(), model.bert_model_trg.state_dict()), "the encoder weights should be different"
 
     # save the model (with best checkpoint loaded)
     model_name = "model_" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".pt"
