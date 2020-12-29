@@ -24,5 +24,5 @@ trap on_exit EXIT
 
 module purge
 module load pytorch/1.3.1
-python3 train.py > log-$SLURM_JOBID.pyout
+python3 train.py
 

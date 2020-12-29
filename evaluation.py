@@ -61,8 +61,6 @@ def main():
     """
     First argument, path to checkpoint for evaluation
     """
-    from train import AlignLangNet
-
     ckpt_path = sys.argv[1]
     model = torch.load(ckpt_path, map_location=torch.device("cpu"))
     model.eval()
@@ -72,7 +70,7 @@ def main():
     print("device", device)
 
     # The dictionary of positives
-    with open("dev-src-positives.json", "r") as f:
+    with open("dev-positives.json", "r") as f:
         pos_dict = json.load(f)
 
     # src sentences in text form
@@ -101,4 +99,5 @@ def main():
 
 
 if __name__ == "__main__":
+    from train import AlignLangNet
     exit(main())

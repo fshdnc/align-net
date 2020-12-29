@@ -21,10 +21,10 @@ echo "END $SLURM_JOBID: $(date)"
 }
 trap on_exit EXIT
 
-CKPT_PATH="/scratch/project_2002820/lihsin/align-lang/model_20201223-221953.pt"
-#CKPT_PATH="/scratch/project_2002820/lihsin/align-lang/model_20201223-131104.pt"
+#CKPT_PATH="/scratch/project_2002820/lihsin/align-lang/model_20201223-221953.pt"
+CKPT_PATH="/scratch/project_2002820/lihsin/align-lang/model_20201228-174218.pt"
 
 module purge
 module load pytorch/1.3.1
-python3 delme_eval.py $CKPT_PATH
+python3 evaluation.py $CKPT_PATH
 
