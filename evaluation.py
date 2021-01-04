@@ -12,7 +12,7 @@ def retrieve_most_similar(vectors1, vectors2):
     Code modified from: https://github.com/TurkuNLP/Deep_Learning_in_LangTech_course/blob/master/laser.ipynb
     Given two vectors, return the most similar for every item in the first vector
     """
-    assert len(vectors1)==len(vectors2)
+    #assert len(vectors1)==len(vectors2)
     all_dist = sklearn.metrics.pairwise_distances(vectors1, vectors2)
     nearest = all_dist.argmin(axis=-1)
     return nearest
@@ -62,6 +62,7 @@ def main():
     First argument, path to checkpoint for evaluation
     """
     ckpt_path = sys.argv[1]
+    #model = AlignLangNet(ckpt_path+"/src", trg_model_path=ckpt_path+"/trg")
     model = torch.load(ckpt_path, map_location=torch.device("cpu"))
     model.eval()
 
@@ -70,16 +71,16 @@ def main():
     print("device", device)
 
     # The dictionary of positives
-    with open("dev-positives.json", "r") as f:
+    with open("data/positives/dedup_src_trg_test-positives.json", "r") as f:
         pos_dict = json.load(f)
 
     # src sentences in text form
-    with open("data/eng-fin/dev.src", "r") as f:
+    with open("data/eng-fin/test.src.dedup", "r") as f:
         src_sentences = f.readlines()
     src_sentences = [line.strip() for line in src_sentences]
 
     # trg sentences in text form
-    with open("data/eng-fin/dev.trg", "r") as f:
+    with open("data/eng-fin/test.trg.dedup", "r") as f:
         trg_sentences = f.readlines()
     trg_sentences = [line.strip() for line in trg_sentences]
 
@@ -87,16 +88,12 @@ def main():
     model.to(model.device)
 
     # embed source and target sentences
-    embeddings = embed_by_batch(model, src_sentences, trg_sentences)
+    embeddings = embed_by_batch(model, src_sentences, trg_sentences, batch_size=64)
 
     # find the nearest neighbor for all the source sentences
     selected_indices = retrieve_most_similar(embeddings["src"], embeddings["trg"])
-    #with open("selected_indices.npy", "wb") as f:
-    #    np.save(f, selected_indices)
-    # calculate acc@1
     acc1 = eval_tatoeba_retrieval(selected_indices, pos_dict)
     print("Accuracy@1", acc1)
-
 
 if __name__ == "__main__":
     from train import AlignLangNet
