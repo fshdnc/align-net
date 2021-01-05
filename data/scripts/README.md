@@ -19,7 +19,8 @@ The generated positives and negatives are different (src->trg or trg->src). Merg
 $ python3 merge_labels.py --source-dictionary dev-src-positives.json --target-dictionary dev-trg-positives.json --merged-dictionary dev-positives.json
 ```
 
-### `dedup.py`: The src and trg sentences contain duplicates, remove the deduplicates in the src and trg files, and remap the indices of the gold standards.
+### `dedup.py`
+The src and trg sentences contain duplicates, remove the deduplicates in the src and trg files, and remap the indices of the gold standards.
 ```
 # for the dev set
 python3 dedup.py --source-file ../tatoeba/data/eng-fin/dev.src --target-file ../tatoeba/data/eng-fin/dev.trg --positive-dictionary dev-positives.json

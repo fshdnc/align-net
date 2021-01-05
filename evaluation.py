@@ -34,6 +34,43 @@ def eval_tatoeba_retrieval(nearest, positive_dict):
     print("Correct predictions", correct, "Total predictions", len(nearest))
     return correct/len(nearest)
 
+def eval_tatoeba_retrieval_print_predictions(nearest, positive_dict, src_sentences, trg_sentences, n=None):
+    """
+    The tatoeba aligned corpus has many to many mapping
+    i.e. multiple source sentences are parallel to multiple target sentences
+    print n predictions, if n not given, print all
+    """
+    if not n: # print all predictions
+        n = len(nearest)
+    prnt = True
+    correct = 0
+    for i, selected_index in enumerate(nearest): # nearest: <class 'numpy.ndarray'>
+        if selected_index in positive_dict[str(i)]:
+            correct += 1
+            if prnt:
+                print("CORRECT:", src_sentences[i], trg_sentences[selected_index])
+        else:
+            if prnt:
+                print("INCORRECT:", src_sentences[i], trg_sentences[selected_index])
+        n = n-1
+        if n==0:
+            prnt = False
+    print("Correct predictions", correct, "Total predictions", len(nearest))
+    return correct/len(nearest)
+
+def load_and_evaluate(model, pos_dict_path, src_path, trg_path, device):
+    with open(pos_dict_path, "r") as f:
+        pos_dict = json.load(f)
+    with open(src_path, "r") as f:
+        src_sentences = f.readlines()
+    src_sentences = [line.strip() for line in src_sentences]
+    with open(trg_path, "r") as f:
+        trg_sentences = f.readlines()
+    trg_sentences = [line.strip() for line in trg_sentences]
+
+    acc1 = evaluate(model, pos_dict, src_sentences, trg_sentences, device)
+    return acc1
+
 def evaluate(model, pos_dict, src_sentences, trg_sentences, device):
     model.eval()
     model.to(device)
@@ -92,7 +129,8 @@ def main():
 
     # find the nearest neighbor for all the source sentences
     selected_indices = retrieve_most_similar(embeddings["src"], embeddings["trg"])
-    acc1 = eval_tatoeba_retrieval(selected_indices, pos_dict)
+    acc1 = eval_tatoeba_retrieval_print_predictions(selected_indices, pos_dict, src_sentences, trg_sentences, n=None)
+    #acc1 = eval_tatoeba_retrieval(selected_indices, pos_dict)
     print("Accuracy@1", acc1)
 
 if __name__ == "__main__":

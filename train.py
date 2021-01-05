@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import sys
 import time
 import copy
@@ -7,10 +8,11 @@ import json
 import numpy as np
 import transformers
 import torch
+torch.manual_seed(1111)
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from datetime import datetime
-from evaluation import evaluate
+from evaluation import load_and_evaluate
 import ParallelDataset
 
 # DEBUGGING
@@ -48,11 +50,13 @@ class AlignLangNet(torch.nn.Module):
         self.tokenizer = transformers.BertTokenizer.from_pretrained(src_model_path)
 
         self.device = device
-        self.ckpt_name = "model_" + datetime.now().strftime("%Y%m%d-%H%M%S") + "_training" + ".pt"
+        self.ckpt_name = "model_" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".pt"
 
-    def save_checkpoint(self):
-        torch.save(self, self.ckpt_name)
-        print("Newest best weights saved to", self.ckpt_name, "(from gpu)")
+    def save(self, path=None):
+        if not path:
+            path = self.ckpt_name
+        torch.save(self, path)
+        print("Newest best weights saved to", path) #, "(from gpu)")
 
     def tokenize_texts(self, texts):
         # runs the BERT tokenizer, returns list of list of integers
@@ -175,7 +179,11 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
                 
                 if phase == "train" and batch_count == 500: # check acc every 500 batches
                     batch_count = 0
-                    epoch_acc = evaluate(model, val_pos_dict, val_src_sentences, val_trg_sentences, device)
+                    epoch_acc = load_and_evaluate(model,
+                                              "data/positives/dedup_src_trg_test-positives.json",
+                                              "data/eng-fin/test.src.dedup",
+                                              "data/eng-fin/test.trg.dedup",
+                                              device)
                     print("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}".format(epoch, epoch_acc))
                     if epoch_acc > patience_acc: # early stopping
                         patience_acc = epoch_acc
@@ -191,14 +199,22 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
 
             #if phase == "val" and epoch_acc > best_acc:
             if phase == "val":
-                train_acc = evaluate(model, pos_dict, src_sentences, trg_sentences, device)
-                epoch_acc = evaluate(model, val_pos_dict, val_src_sentences, val_trg_sentences, device)
+                train_acc = load_and_evaluate(model,
+                                              "data/positives/dedup_src_trg_dev-positives.json",
+                                              "data/eng-fin/dev.src.dedup",
+                                              "data/eng-fin/dev.trg.dedup",
+                                              device)
+                epoch_acc = load_and_evaluate(model,
+                                              "data/positives/dedup_src_trg_test-positives.json",
+                                              "data/eng-fin/test.src.dedup",
+                                              "data/eng-fin/test.trg.dedup",
+                                              device)
                 print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tTrain_acc\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, train_acc, epoch_acc))
                 if epoch_acc > best_acc:
                     best_acc = epoch_acc
-                    best_model_wts = copy.deepcopy(model.state_dict())
+                    #best_model_wts = copy.deepcopy(model.state_dict())
                     #print("Best model weights copied")
-                    model.save_checkpoint()
+                    model.save()
             else:
                 print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}".format(epoch, phase, epoch_loss))
 
@@ -209,7 +225,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
     print("Best val Acc: {:4f}".format(best_acc))
 
     # load the weights
-    model.load_state_dict(best_model_wts)
+    #model.load_state_dict(best_model_wts)
     
     return model
 
@@ -262,7 +278,7 @@ def main():
     with open("data/eng-fin/test.trg", "r") as f:
         val_trg_sentences = f.readlines()
     val_trg_sentences = [line.strip() for line in val_trg_sentences]
-    
+
     #val_dataset = ParallelDataset([*generate_candidate()])
     val_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(val_I, val_pos_dict, val_src_sentences, val_trg_sentences)])
     val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=train_batch_size)
@@ -273,15 +289,18 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
     #optimizer = torch.optim.SGD(model.parameters(), lr=2e-5, momentum=0.9)
     print("lr\t2e-5, adam")
-    
-    model = train_model(model, dataloaders, AlignLoss, optimizer, num_epochs=3)
+    model.save("model_no_training")
+    exit(0)
+
+    model = train_model(model, dataloaders, AlignLoss, optimizer, num_epochs=10)
     assert not compare_models(model.bert_model_src.state_dict(), model.bert_model_trg.state_dict()), "the encoder weights should be different"
 
     # save the model (with best checkpoint loaded)
-    model_name = "model_" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".pt"
-    model.to("cpu")
-    torch.save(model, model_name)
-    print("Final model (best checkpoint) saved to", model_name)
+    #model_name = "model_" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".pt"
+    #model.to("cpu")
+    #model.save()
+    #print("Final model (best checkpoint) saved to", model_name)
+
     return 0
     
 if __name__=="__main__":
