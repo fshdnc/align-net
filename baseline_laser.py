@@ -58,6 +58,13 @@ def main():
     acc = eval_tatoeba_retrieval(selected_indices, pos)
     print("Laser for test set:", acc)
 
+    pos, src, trg = load("data/wmt/dedup_src_trg_wmt-positives.json",
+                            "data/wmt/wmt-en.txt.dedup",
+                            "data/wmt/wmt-fi.txt.dedup")
+    src_test, trg_test = embed(laser, src, trg)
+    selected_indices = retrieve_most_similar(src_test, trg_test)
+    acc = eval_tatoeba_retrieval(selected_indices, pos)
+    print("Laser for wmt:", acc)
     return 0
 
 if __name__=="__main__":

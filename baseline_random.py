@@ -34,7 +34,10 @@ def main():
                              "data/eng-fin/test.src.dedup",
                              "data/eng-fin/test.trg.dedup")
     print("Random baseline for test set:", test_acc)
-
+    wmt_acc = load_and_eval("data/wmt/dedup_src_trg_wmt-positives.json",
+                            "data/wmt/wmt-en.txt.dedup",
+                            "data/wmt/wmt-fi.txt.dedup")
+    print("Random baseline for wmt 2015-2018 test set:", wmt_acc)
     return 0
     
 if __name__=="__main__":

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-import sys
 import json
 import torch
 import sklearn
+import argparse
 import numpy as np
 from math import ceil
 
@@ -94,13 +94,23 @@ def embed_by_batch(model, src_sentences, trg_sentences, batch_size=128):
     assert len(embeddings["src"])==len(src_sentences)
     return embeddings
 
+def parse_args():
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--src-sentences", help="File containing source sentences", required=True)
+    argparser.add_argument("--trg-sentences", help="File containing target sentences", required=True)
+    argparser.add_argument("--ckpt-path", help="Path to the AlignLangNet checkpoint to be evaluated", required=True)
+    argparser.add_argument("--positive-dict", help="Path to the json positive dictionary", required=True)
+    args = argparser.parse_args()
+    return args
+
 def main():
     """
     First argument, path to checkpoint for evaluation
     """
-    ckpt_path = sys.argv[1]
-    #model = AlignLangNet(ckpt_path+"/src", trg_model_path=ckpt_path+"/trg")
-    model = torch.load(ckpt_path, map_location=torch.device("cpu"))
+    args = parse_args()
+
+    #model = AlignLangNet(args.ckpt_path+"/src", trg_model_path=args.ckpt_path+"/trg")
+    model = torch.load(args.ckpt_path, map_location=torch.device("cpu"))
     model.eval()
 
     global device
@@ -108,16 +118,16 @@ def main():
     print("device", device)
 
     # The dictionary of positives
-    with open("data/positives/dedup_src_trg_test-positives.json", "r") as f:
+    with open(args.positive_dict, "r") as f:
         pos_dict = json.load(f)
 
     # src sentences in text form
-    with open("data/eng-fin/test.src.dedup", "r") as f:
+    with open(args.src_sentences, "r") as f:
         src_sentences = f.readlines()
     src_sentences = [line.strip() for line in src_sentences]
 
     # trg sentences in text form
-    with open("data/eng-fin/test.trg.dedup", "r") as f:
+    with open(args.trg_sentences, "r") as f:
         trg_sentences = f.readlines()
     trg_sentences = [line.strip() for line in trg_sentences]
 

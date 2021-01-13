@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from datetime import datetime
 from evaluation import load_and_evaluate
 import ParallelDataset
+from itertools import islice
 
 # DEBUGGING
 from tools import compare_models
@@ -129,8 +130,16 @@ def AlignLoss(data, gold, class_weight=None):
         loss_per_sample = torch.mul(loss_per_sample, class_weight)
     return torch.mean(loss_per_sample)
 
+def dataloader_generator(dataloaders, phase, iterations):
+    # iterations = no. of training samples / batch_size
+    if phase == "train":
+        return islice(dataloaders["train"], iterations)
+    elif phase == "val":
+        return dataloaders["val"]
+    else:
+        raise ValueError
 
-def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
+def train_model(model, dataloaders, criterion, optimizer, batch_no, num_epochs=10):
     global device, src_sentences, trg_sentences, pos_dict, val_src_sentences, val_trg_sentences, val_pos_dict
     since = time.time()
 
@@ -148,7 +157,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
         for phase in ["train", "val"]:
             if phase == "train":
                 model.train()
-                class_weight = {0:torch.tensor(0.3).to(device).float(), 1: torch.tensor(1).to(device).float()}
+                class_weight = {0:torch.tensor(0.22).to(device).float(), 1: torch.tensor(0.78).to(device).float()}
             else:
                 model.eval()
                 class_weight={}
@@ -156,7 +165,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
             running_loss = 0.0
             #eval_metric = 0
             batch_count = 0
-            for inputs, labels in dataloaders[phase]:
+            for inputs, labels in dataloader_generator(dataloaders, phase, batch_no): #3866726): #123 735 236/batch_size
                 # tokenize the sentences and move to device
                 labels = labels.to(device) #.float()
 
@@ -185,31 +194,39 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=10):
                                               "data/eng-fin/test.trg.dedup",
                                               device)
                     print("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}".format(epoch, epoch_acc))
+                    # Puhti stdout doesn't show until the job ends
+                    with open("DELME_training.txt","a") as f:
+                        f.write("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}\n".format(epoch, epoch_acc))
                     if epoch_acc > patience_acc: # early stopping
                         patience_acc = epoch_acc
                         patience = 0
+                        model.save()
                     else:
                         patience += 1
                 if patience > 10: # if acc does not improve in 10 checks x 50 batch/check x 128 sample/batch
                     print("Early stopping, best accuracy", patience_acc)
                     exit(0)
                     
-            epoch_loss = running_loss / len(dataloaders[phase]) #dataset_sizes[phase]
+            if phase == "train":
+                epoch_loss = running_loss/(batch_no*labels.size(0))
+            elif phase == "val":
+                epoch_loss = running_loss / len(dataloaders[phase]) #dataset_sizes[phase]
             # in case of memory leakage, try epoch_loss += loss.detach().item()
 
             #if phase == "val" and epoch_acc > best_acc:
             if phase == "val":
-                train_acc = load_and_evaluate(model,
-                                              "data/positives/dedup_src_trg_dev-positives.json",
-                                              "data/eng-fin/dev.src.dedup",
-                                              "data/eng-fin/dev.trg.dedup",
-                                              device)
+                #train_acc = load_and_evaluate(model,
+                #                              "data/positives/dedup_src_trg_dev-positives.json",
+                #                              "data/eng-fin/dev.src.dedup",
+                #                              "data/eng-fin/dev.trg.dedup",
+                #                              device)
                 epoch_acc = load_and_evaluate(model,
                                               "data/positives/dedup_src_trg_test-positives.json",
                                               "data/eng-fin/test.src.dedup",
                                               "data/eng-fin/test.trg.dedup",
                                               device)
-                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tTrain_acc\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, train_acc, epoch_acc))
+                #print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tTrain_acc\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, train_acc, epoch_acc))
+                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, epoch_acc))
                 if epoch_acc > best_acc:
                     best_acc = epoch_acc
                     #best_model_wts = copy.deepcopy(model.state_dict())
@@ -235,30 +252,32 @@ def main():
     print("device:", device)
 
     model_path = "/scratch/project_2002820/lihsin/bert_checkpoints/biBERT80-transformers" #"/home/lhchan/embeddings/biBERT80-transformers"
-    train_batch_size = 128
+    train_batch_size = 32
 
     # the selected candidates, in numpy array
-    with open("dev-src-dev-trg-ivf1584.npy", "rb") as f:
-        D, I = np.load(f)
-    del D
+    #with open("dev-src-dev-trg-ivf1584.npy", "rb") as f:
+    #    D, I = np.load(f)
+    #del D
 
     # The dictionary of positives
-    with open("dev-positives.json", "r") as f:
-        pos_dict = json.load(f)
+    #with open("dev-positives.json", "r") as f:
+    #    pos_dict = json.load(f)
 
     # src sentences in text form
-    with open("data/eng-fin/dev.src", "r") as f:
-        src_sentences = f.readlines()
-    src_sentences = [line.strip() for line in src_sentences]
+    #with open("data/eng-fin/dev.src", "r") as f:
+    #    src_sentences = f.readlines()
+    #src_sentences = [line.strip() for line in src_sentences]
 
     # trg sentences in text form
-    with open("data/eng-fin/dev.trg", "r") as f:
-        trg_sentences = f.readlines()
-    trg_sentences = [line.strip() for line in trg_sentences]
+    #with open("data/eng-fin/dev.trg", "r") as f:
+    #    trg_sentences = f.readlines()
+    #trg_sentences = [line.strip() for line in trg_sentences]
 
     # dataloaders
-    train_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)])
-    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=train_batch_size)
+    #train_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)])
+    #train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=train_batch_size)
+    train_dataset = ParallelDataset.HugeParallelDataset("/scratch/project_2002820/lihsin/align-lang/data/laser-test-set/train_clean_shuffled.txt.gz")
+    train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size)
 
     # load data for the valiation dataset
     with open("test-trg-test-src-flatL2.npy", "rb") as f:
@@ -286,13 +305,11 @@ def main():
     dataloaders = {"train": train_dataloader, "val": val_dataloader}
     
     model = AlignLangNet(model_path, device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
     #optimizer = torch.optim.SGD(model.parameters(), lr=2e-5, momentum=0.9)
-    print("lr\t2e-5, adam")
-    model.save("model_no_training")
-    exit(0)
+    print("lr\t1e-5, adam")
 
-    model = train_model(model, dataloaders, AlignLoss, optimizer, num_epochs=10)
+    model = train_model(model, dataloaders, AlignLoss, optimizer, 770000, num_epochs=1) #770000
     assert not compare_models(model.bert_model_src.state_dict(), model.bert_model_trg.state_dict()), "the encoder weights should be different"
 
     # save the model (with best checkpoint loaded)
