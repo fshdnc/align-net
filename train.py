@@ -6,6 +6,7 @@ import time
 import copy
 import json
 import numpy as np
+import argparse
 import transformers
 import torch
 torch.manual_seed(1111)
@@ -59,9 +60,10 @@ class AlignLangNet(torch.nn.Module):
         torch.save(self, path)
         print("Newest best weights saved to", path) #, "(from gpu)")
 
-    def tokenize_texts(self, texts):
+    def tokenize_texts(self, texts, max_length=200):
         # runs the BERT tokenizer, returns list of list of integers
         tokenized_ids = [self.tokenizer.encode(txt, add_special_tokens=True) for txt in texts]
+        tokenized_ids = [ids if len(ids)<=max_length else ids[:max_length] for ids in tokenized_ids]
         # turn lists of integers into torch tensors
         tokenized_ids_t = [torch.tensor(ids, dtype=torch.long) for ids in tokenized_ids]
         # zero-padding
@@ -143,7 +145,7 @@ def train_model(model, dataloaders, criterion, optimizer, batch_no, num_epochs=1
     global device, src_sentences, trg_sentences, pos_dict, val_src_sentences, val_trg_sentences, val_pos_dict
     since = time.time()
 
-    best_model_wts = copy.deepcopy(model.state_dict())
+    #best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = 0
 
     # for every epoch -> for train and eval -> loop over data
@@ -151,13 +153,13 @@ def train_model(model, dataloaders, criterion, optimizer, batch_no, num_epochs=1
         patience = 0
         patience_acc = 0
 
-        print("Epoch {}/{}".format(epoch, num_epochs-1))
-        print("-"*10)
+        print("Epoch {}/{}".format(epoch, num_epochs-1), flush=True)
+        print("-"*10, flush=True)
 
         for phase in ["train", "val"]:
             if phase == "train":
                 model.train()
-                class_weight = {0:torch.tensor(0.22).to(device).float(), 1: torch.tensor(0.78).to(device).float()}
+                class_weight = {0:torch.tensor(0.22).to(device).float(), 1: torch.tensor(1).to(device).float()}
             else:
                 model.eval()
                 class_weight={}
@@ -186,14 +188,14 @@ def train_model(model, dataloaders, criterion, optimizer, batch_no, num_epochs=1
                 running_loss += loss.item() * labels.size(0)
                 # eval_metrics += e.g. torch.sum(preds == labels.data)
                 
-                if phase == "train" and batch_count == 500: # check acc every 500 batches
+                if phase == "train" and batch_count == 2500: # check acc every 2500 batches
                     batch_count = 0
                     epoch_acc = load_and_evaluate(model,
                                               "data/positives/dedup_src_trg_test-positives.json",
                                               "data/eng-fin/test.src.dedup",
                                               "data/eng-fin/test.trg.dedup",
                                               device)
-                    print("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}".format(epoch, epoch_acc))
+                    print("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}".format(epoch, epoch_acc), flush=True)
                     # Puhti stdout doesn't show until the job ends
                     with open("DELME_training.txt","a") as f:
                         f.write("Epoch\t{}\tPhase\tTRAINING\tAcc\t{:.4f}\n".format(epoch, epoch_acc))
@@ -226,33 +228,40 @@ def train_model(model, dataloaders, criterion, optimizer, batch_no, num_epochs=1
                                               "data/eng-fin/test.trg.dedup",
                                               device)
                 #print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tTrain_acc\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, train_acc, epoch_acc))
-                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, epoch_acc))
+                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}\tVal_acc\t{:.4f}".format(epoch, phase, epoch_loss, epoch_acc), flush=True)
                 if epoch_acc > best_acc:
                     best_acc = epoch_acc
                     #best_model_wts = copy.deepcopy(model.state_dict())
                     #print("Best model weights copied")
                     model.save()
             else:
-                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}".format(epoch, phase, epoch_loss))
+                print("Epoch\t{}\tPhase\t{}\tLoss\t{:.4f}".format(epoch, phase, epoch_loss), flush=True)
 
         print()
 
     time_elapsed = time.time() - since
-    print("Training complete in {:.0f}m {:.0f}s".format(time_elapsed // 60, time_elapsed % 60))
-    print("Best val Acc: {:4f}".format(best_acc))
+    print("Training complete in {:.0f}m {:.0f}s".format(time_elapsed // 60, time_elapsed % 60), flush=True)
+    print("Best val Acc: {:4f}".format(best_acc), flush=True)
 
     # load the weights
     #model.load_state_dict(best_model_wts)
     
     return model
 
+def parse_arguments():
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--train-batch-size", type=int, help="Batch size for training", required=True)
+    argparser.add_argument("--learning-rate", type=float, help="Learning rate", required=True)
+    args = argparser.parse_args()
+    return args
+
 def main():
-    global device, src_sentences, trg_sentences, pos_dict, val_src_sentences, val_trg_sentences, val_pos_dict
+    global device, src_sentences, trg_sentences, pos_dict, val_src_sentences, val_trg_sentences, val_pos_dict, args
+    args = parse_arguments()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("device:", device)
 
     model_path = "/scratch/project_2002820/lihsin/bert_checkpoints/biBERT80-transformers" #"/home/lhchan/embeddings/biBERT80-transformers"
-    train_batch_size = 32
 
     # the selected candidates, in numpy array
     #with open("dev-src-dev-trg-ivf1584.npy", "rb") as f:
@@ -277,7 +286,7 @@ def main():
     #train_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(I, pos_dict, src_sentences, trg_sentences)])
     #train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=train_batch_size)
     train_dataset = ParallelDataset.HugeParallelDataset("/scratch/project_2002820/lihsin/align-lang/data/laser-test-set/train_clean_shuffled.txt.gz")
-    train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.train_batch_size)
 
     # load data for the valiation dataset
     with open("test-trg-test-src-flatL2.npy", "rb") as f:
@@ -300,23 +309,15 @@ def main():
 
     #val_dataset = ParallelDataset([*generate_candidate()])
     val_dataset = ParallelDataset.ParallelDataset([*ParallelDataset.generate_candidate(val_I, val_pos_dict, val_src_sentences, val_trg_sentences)])
-    val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=train_batch_size)
+    val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=args.train_batch_size)
 
     dataloaders = {"train": train_dataloader, "val": val_dataloader}
     
     model = AlignLangNet(model_path, device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
-    #optimizer = torch.optim.SGD(model.parameters(), lr=2e-5, momentum=0.9)
-    print("lr\t1e-5, adam")
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     model = train_model(model, dataloaders, AlignLoss, optimizer, 770000, num_epochs=1) #770000
     assert not compare_models(model.bert_model_src.state_dict(), model.bert_model_trg.state_dict()), "the encoder weights should be different"
-
-    # save the model (with best checkpoint loaded)
-    #model_name = "model_" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".pt"
-    #model.to("cpu")
-    #model.save()
-    #print("Final model (best checkpoint) saved to", model_name)
 
     return 0
     

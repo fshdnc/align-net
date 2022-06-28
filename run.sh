@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=24:10:00
+#SBATCH --time=10:00:00
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:v100:1
 #SBATCH --ntasks-per-node=1
@@ -24,5 +24,7 @@ trap on_exit EXIT
 
 module purge
 module load pytorch/1.3.1
-python3 train.py
+python3 train.py \
+    --train-batch-size 64 \
+    --learning-rate 1e-5
 

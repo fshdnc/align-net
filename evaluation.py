@@ -31,7 +31,7 @@ def eval_tatoeba_retrieval(nearest, positive_dict):
         if selected_index in positive_dict[str(i)]:
             correct += 1
         #    print("correct", selected_index, positive_dict[str(i)])
-    print("Correct predictions", correct, "Total predictions", len(nearest))
+    print("Correct predictions", correct, "Total predictions", len(nearest), flush=True)
     return correct/len(nearest)
 
 def eval_tatoeba_retrieval_print_predictions(nearest, positive_dict, src_sentences, trg_sentences, n=None):
